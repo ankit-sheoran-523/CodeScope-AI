@@ -1,4 +1,5 @@
 import time
+import re
 import streamlit as st
 import json
 from github import Github
@@ -320,7 +321,7 @@ with st.sidebar:
         if not api_key:
             st.warning("⚠️ Please enter your Gemini API key in the sidebar to proceed with Gemini.")
             st.stop()
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key, temperature=0.2)
+        llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash", google_api_key=api_key, temperature=0.2)
     else:
         g_api_key = st.text_input("Enter Groq API Key:", type="password")
         api_key = st.text_input("Enter Gemini API Key:", type="password", help="Separate key for embeddings")
@@ -339,12 +340,22 @@ with st.sidebar:
     if user_id and repo:
         try:
             readme_file = repo.get_readme()
-            readme_text = readme_file.decoded_content.decode("utf-8")
+            raw_text = readme_file.decoded_content.decode("utf-8")
+            cleaned_text = re.sub(r"[#\-_*=`\s]", "", raw_text).lower()
+            repo_clean_name = re.sub(r"[-_\s]", "", repo.name).lower()
+            
+            if len(cleaned_text) <= 20 or cleaned_text == repo_clean_name:
+                readme_text = ""
+                has_valid_readme = False
+            else:
+                readme_text = raw_text
+                has_valid_readme = True
         except Exception:
-            readme_text = "No README.md found in this repository."
+            readme_text = ""
+            has_valid_readme = False
 
     st.divider()
-    # OPTIMIZATION 3: Sidebar New Chat Clears BOTH Tab Histories
+    
     if st.button("🔄 Start New Chat (All Tabs)", use_container_width=True):
         st.session_state.messages = []
         st.session_state.file_messages = []
@@ -368,8 +379,14 @@ with readme_tab:
         st.warning("Please enter your Gemini API key in the sidebar to proceed with Gemini.")
     elif model == 'Groq' and (not g_api_key or not api_key):
         st.info("Please enter your Groq API and Gemini API key in the sidebar to proceed.")
+    elif not has_valid_readme:
+        st.warning(f"⚠️ **Insufficient or Missing README.md in `{s_repo}`**")
+        st.info(
+            "This repository does not contain descriptive documentation or only has a placeholder title.\n\n"
+            "👉 **Recommendation:** Switch to the **Files Analysis** tab to analyze and query the actual source code files directly."
+        )
     else:
-        # OPTIMIZATION 1: Buttons for Readme Summary Generation & Readme Chat Reset
+        
         col_r1, col_r2 = st.columns([2, 1])
         with col_r1:
             gen_readme_btn = st.button("🚀 Generate Repository Summary", use_container_width=True)
@@ -397,7 +414,6 @@ with readme_tab:
             st.markdown(st.session_state.llm_summary)
             st.divider()
 
-        # OPTIMIZATION 2: Scoped strictly inside readme_tab (No leakage to file_tab)
         if len(st.session_state.get("messages", [])) > 0:
             st.subheader('Chats', divider=True)
             for msg in st.session_state.messages:
@@ -521,7 +537,7 @@ def multi_file_preprocessing(file_data_map: dict, unified_summary: str, api_key:
             metadata={"source": f"Code: {f_path}", "file_name": f_path, "doc_type": "raw_code"}
         ))
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=750, chunk_overlap=120)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=750, chunk_overlap=150)
     split_docs = text_splitter.split_documents(all_docs)
 
     for idx, doc in enumerate(split_docs, 1):
